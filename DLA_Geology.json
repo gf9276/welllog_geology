@@ -1,0 +1,52 @@
+{
+  "tasktype": "0",
+  "subtype": "0",
+  "algtype": "6",
+  "alginstancename": "DLA_Geology",
+  "alginstancealias": "地层划分_DLA",
+  "parameter": [
+    {
+      "alias": "切片长度",
+      "val": "97",
+      "min": "10",
+      "max": "180",
+      "name": "slicelength",
+      "enable": "true"
+    },
+    {
+      "alias": "训练轮次",
+      "val": "100",
+      "min": "10",
+      "max": "1000",
+      "name": "epoch",
+      "enable": "true"
+    },
+    {
+      "alias": "批次大小",
+      "val": "1024",
+      "min": "1",
+      "max": "10000",
+      "name": "batchsize",
+      "enable": "true"
+    },
+    {
+      "alias": "学习率",
+      "val": "0.02",
+      "min": "0",
+      "max": "1",
+      "name": "learningrate",
+      "enable": "true"
+    },
+    {
+      "alias": "损失函数",
+      "enums": [
+        "CrossEntropy"
+      ],
+      "val": "0",
+      "min": "0",
+      "max": "0",
+      "name": "lossfunc",
+      "enable": "true"
+    }
+  ]
+}
