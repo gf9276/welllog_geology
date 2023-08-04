@@ -9,40 +9,36 @@ import torch.nn.functional as F
 # training config
 slicelength = 97
 epoch = 100
+batchsize = 1024
 learningrate = 0.001
+lossfunc = 0
 
 # network config
 featurenum = 6
-lossfunc = 0
-lossdict = {0: torch.nn.CrossEntropyLoss(), 1: torch.nn.CrossEntropyLoss()}  # 为了兼容命令,暂时保留1
-label = ['36', '21', '3', '4', '27', '2', '1', '0', '25', '37', '34', '35', '33', '32', '30', '31', '28', '29', '24', '23', '13', '14', '15', '16', '17', '18',
-         '19', '26', '12', '22', '5', '6', '20', '7', '8', '9', '10', '11']
-trainLabel = './Data/train_地质分层_编号_LABEL.txt'
-valLabel = './Data/val_地质分层_编号_LABEL.txt'
-batchsize = 16
-# NAN:CONFIG-END
+label = ['34', '19', '3', '4', '25', '2', '1', '0', '23', '35', '32', '33', '31', '30', '28', '29', '26', '27', '22', '21', '12', '13', '14', '15', '16', '17',
+         '18', '24', '11', '20', '5', '6', '7', '8', '9', '10']
 
-modelName = 'Transformer'
-trainDir = './Data/train.h5'
-valDir = './Data/val.h5'
-savePath = './Log/output.pth'
+# -------- Do not delete this line, the configuration ends here. --------
 
-gpuId = 1
-labelNum = len(label)
-avgPool = 1
-pretrainedPath = "./Log/output_save.pth"
+# --------- 变量映射 & 二次处理 & 通用函数定义, 我不喜欢原先的变量命名. ---------
+model_name = 'Transformer'
+features_num = featurenum
+label_classes = label
+label_num = len(label_classes)
+batch_size = batchsize
+loss_dict = {0: torch.nn.CrossEntropyLoss(), 1: torch.nn.CrossEntropyLoss()}  # 为了兼容命令,暂时保留1
+loss_func_idx = lossfunc
 
 
 def loss_and_opt(net):
-    loss_func = lossdict[lossfunc]
+    loss_func = loss_dict[loss_func_idx]
     opt = torch.optim.Adam(net.parameters(), lr=learningrate)
-    # exp_lr = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.98)
-    exp_lr = torch.optim.lr_scheduler.StepLR(opt, step_size=2, gamma=0.8)
+    exp_lr = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.98)
     return loss_func, opt, exp_lr
 
 
 def Net():
-    return make_model(featurenum, labelNum, d_model=512)
+    return make_model(features_num, label_num, d_model=512)
 
 
 class EncoderDecoder(nn.Module):

@@ -13,6 +13,7 @@ import torch
 
 from utils_cls import set_seeds, sample_to_device, save_fig
 from dataloader_cls import setup_dataloaders
+from pathlib import Path
 
 
 def parse_args():
@@ -21,10 +22,19 @@ def parse_args():
     :return:
     """
     parser = argparse.ArgumentParser(description='Train a model')
+    # 模型配置文件
     parser.add_argument('--config', default="SENet_Geology", help='模型的名字')
-    parser.add_argument('--work_dir', default="./Log/logging.json", help='保存日志的位置')
+    # 文件和路径相关
+    parser.add_argument('--logging_filepath', default="./Log/logging.json", help='日志文件路径')
+    parser.add_argument('--model_save_path', default="./Log/output.pth", help='模型文件保存路径')
+    parser.add_argument('--train_filepath', default="./Data/train.h5", help='训练集路径')
+    parser.add_argument('--val_filepath', default="./Data/val.h5", help='验证集路径')
+    # 一些开关
     parser.add_argument('--pretrained', default="True", help='是否要预训练')
-    parser.add_argument('--draw_plt', default="False", help='是否绘图')
+    parser.add_argument('--checkpoint', default='./Log/output.pth', help='模型权重路径')
+    parser.add_argument('--draw_plt', default="True", help='是否绘图')
+    # 其他
+    parser.add_argument('--gpu_id', default="0", help='gpu_id')
 
     args = parser.parse_args()
     return args
@@ -32,183 +42,108 @@ def parse_args():
 
 def run_epoch(net, train_loader, optimizer, criterion):
     net.train()  # 很重要
-    total_loss = 0
-    all_nbr = 0
-    correct_nbr = 0
-    n_batches = len(train_loader)
+    total_loss = []
+    label_nbr = 0  # 标签总数
+    eq_nbr = 0  # equal number
     cur_device = next(net.parameters()).device
-    print_period = 20
+    print_period = 10
+    start = time.time()
 
     for batch_idx, batch in enumerate(train_loader):
-        start = time.time()
-        cur_batch_size = len(batch["features"])
-        if net.model_type == "general":
-            batch = sample_to_device(batch, cur_device)
-            features = torch.swapaxes(batch["features"], 1, 2)
-            label = batch["label"].long()
-            all_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
+        this_batch = sample_to_device(batch, cur_device)
+        features = torch.swapaxes(this_batch["features"], 1, 2)
+        label = this_batch["label"].long()
+        label_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
 
-            net.zero_grad()
-            optimizer.zero_grad()
-            output = net(features)
-            loss = criterion(output, label.long())
-            loss.backward()
-            optimizer.step()
+        net.zero_grad()
+        optimizer.zero_grad()
+        output = net(features)
+        loss = criterion(output, label)
+        loss.backward()
+        optimizer.step()
 
-            _, predicted = output.max(1)  # 获取标签
-            correct_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
-            total_loss += loss.item()  # 记录损失函数
-        elif net.model_type == "transformer":
-            # batch = sample_to_device(batch, cur_device)
-            # features = batch["features"]
-            # multi_label = batch["multi_label"].long()
-            # transformer_batch = net.get_batch(features, None, 926219)
-            # all_nbr += len(multi_label.contiguous().view(-1))  # 这是考虑到整体数据量不能被batch size整除
-            #
-            # net.zero_grad()
-            # optimizer.zero_grad()
-            # output = net.forward(src=transformer_batch.src, src_mask=transformer_batch.src_mask, just_encoder=True)
-            # loss = criterion(output.contiguous().view(-1, output.size(-1)), multi_label.contiguous().view(-1))
-            # loss.backward()
-            # optimizer.step()
-            #
-            # _, predicted = output.contiguous().view(-1, output.size(-1)).max(1)  # 获取标签
-            # correct_nbr += predicted.eq(multi_label.contiguous().view(-1)).sum().item()  # 记录标签准确数量
-            # total_loss += loss.item()  # 记录损失函数
+        _, predicted = output.max(1)  # 获取标签
+        eq_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
+        total_loss.append(loss.item())  # 记录损失函数
 
-            batch = sample_to_device(batch, cur_device)
-            features = batch["features"]
-            transformer_batch = net.get_batch(features, None, 926219)
-            label = batch["label"].long()
-            all_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
+        if batch_idx % print_period == 0:
+            use_time = time.time() - start
+            start = time.time()
+            print("Batch: {} / {}, Sliced: {} / {}, Loss: {:.4f}, Acc: {:.4f}%, Speed: {:.4f} sliced/s".format(
+                batch_idx, len(train_loader),
+                label_nbr, len(train_loader.dataset),
+                sum(total_loss) / len(total_loss),
+                100 * eq_nbr / label_nbr,
+                label_nbr / use_time))
 
-            net.zero_grad()
-            optimizer.zero_grad()
-            output = net.forward(src=transformer_batch.src, src_mask=transformer_batch.src_mask, just_encoder=True)
-            output = output[:, output.shape[1] // 2, :]
-            loss = criterion(output, label.long())
-            loss.backward()
-            optimizer.step()
-
-            _, predicted = output.max(1)  # 获取标签
-            correct_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
-            total_loss += loss.item()  # 记录损失函数
-
-            if batch_idx % print_period == 0:
-                use_time = time.time() - start
-                print("Epoch Step: %d, Loss: %f , Acc: %f, Tokens per Sec: %f" %
-                      (batch_idx, total_loss / (batch_idx + 1), correct_nbr / all_nbr, use_time / cur_batch_size))
-
-    return correct_nbr / all_nbr, total_loss / n_batches
+    return eq_nbr / label_nbr, sum(total_loss) / len(total_loss)
 
 
 def eval_val(net, val_loader, criterion):
-    total_loss = 0
-    all_nbr = 0
-    correct_nbr = 0
     net.eval()  # 很重要
     net.training = False
-    n_batches = len(val_loader)
+    total_loss = []
+    label_nbr = 0
+    eq_nbr = 0
     cur_device = next(net.parameters()).device
-    total_output = []
-    total_label = []
+
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            if net.model_type == "general":
-                batch = sample_to_device(batch, cur_device)
-                features = torch.swapaxes(batch["features"], 1, 2)
-                label = batch["label"].long()
-                all_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
+            this_batch = sample_to_device(batch, cur_device)
+            features = torch.swapaxes(this_batch["features"], 1, 2)
+            label = this_batch["label"].long()
+            label_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
 
-                output = net(features)
-                loss = criterion(output, label.long())
+            output = net(features)
+            loss = criterion(output, label)
 
-                _, predicted = output.max(1)  # 获取标签
+            _, predicted = output.max(1)  # 获取标签
 
-                total_output += output
-                total_label += label.squeeze()
+            eq_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
+            total_loss.append(loss.item())  # 记录损失函数
 
-                correct_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
-                total_loss += loss.item()  # 记录损失函数
-            elif net.model_type == "transformer":
-                batch = sample_to_device(batch, cur_device)
-                features = batch["features"]
-                multi_label = batch["multi_label"].long()
-                transformer_batch = net.get_batch(features, None, 926219)
-                all_nbr += len(multi_label.contiguous().view(-1))  # 这是考虑到整体数据量不能被batch size整除
-
-                output = net.forward(src=transformer_batch.src, src_mask=transformer_batch.src_mask, just_encoder=True)
-                loss = criterion(output.contiguous().view(-1, output.size(-1)), multi_label.contiguous().view(-1))
-
-                _, predicted = output.contiguous().view(-1, output.size(-1)).max(1)  # 获取标签
-                predicted = val_loader.dataset.remove_overlap(predicted)
-                label = val_loader.dataset.remove_overlap(multi_label.contiguous().view(-1))
-                correct_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
-                total_loss += loss.item()  # 记录损失函数
-                # batch = sample_to_device(batch, cur_device)
-                # features = batch["features"]
-                # label = batch["label"].long()
-                # transformer_batch = net.get_batch(features, None, 926219)
-                # all_nbr += len(label)  # 这是考虑到整体数据量不能被batch size整除
-                #
-                # output = net.forward(src=transformer_batch.src, src_mask=transformer_batch.src_mask, just_encoder=True)
-                # output = output[:, output.shape[1] // 2, :]
-                # loss = criterion(output, label.long())
-                #
-                # _, predicted = output.max(1)  # 获取标签
-                # correct_nbr += predicted.eq(label).sum().item()  # 记录标签准确数量
-                # total_loss += loss.item()  # 记录损失函数
-
-    return correct_nbr / all_nbr, total_loss / n_batches, total_output, total_label
+    return eq_nbr / label_nbr, sum(total_loss) / len(total_loss)
 
 
 def main(args):
     # --------------------O(∩_∩)O-------------- 成功第一步，固定随机数种子 ----------------------------------
-    set_seeds(9276)
-    # --------------------O(∩_∩)O-------------- 成功第二步，配置参数 ----------------------------------
+    set_seeds()
+    # --------------------O(∩_∩)O---------------- 成功第二步，配置参数 -------------------------------------
+    # 01 获取 args 配置参数, 训练脚本的相关参数
     cfg = args.config
-    work_dir = args.work_dir
+    logging_filepath = args.logging_filepath
+    log_dir = str(Path(logging_filepath).parent)
+    model_save_path = args.model_save_path
+    train_h5filepath = args.train_filepath
+    val_h5filepath = args.val_filepath
+    checkpoint = args.checkpoint
     pretrained = args.pretrained
     draw_plt = args.draw_plt
-    # 导入模型文件
-    x = import_module(cfg)
-    # 获取文件路径
-    train_h5filepath = x.trainDir
-    val_h5filepath = x.valDir
-    train_label_filepath = x.trainLabel
-    val_label_filepath = x.valLabel
-    model_save_path = x.savePath
-    # 获取训练的一些参数
-    epoch_nbr = x.epoch
-    gpu_id = str(x.gpuId)
-    batch_size = x.batchsize
+    gpu_id = args.gpu_id
     device = torch.device('cuda:' + gpu_id if torch.cuda.is_available() else 'cpu')
-    label_nbr = x.labelNum
-    label_classes = x.label
-    features_nbr = x.featurenum
-    slice_length = x.slicelength
+    # 02 获取模型配置文件里的参数, 与模型有关的训练参数
+    x = import_module(cfg)
+    epoch_nbr = x.epoch
+    batch_size = x.batch_size
+    label_classes = x.label_classes
     # --------------------O(∩_∩)O-------------- 成功第三步，加载数据集 ----------------------------------
     train_dataset, train_loader = setup_dataloaders(
         train_h5filepath,
-        train_label_filepath,
         label_classes,
         batch_size,
         num_workers=cpu_count(),
-        shuffle=True,
-        noise=True)
+        shuffle=True)
     val_dataset, val_loader = setup_dataloaders(
         val_h5filepath,
-        val_label_filepath,
         label_classes,
         batch_size,
         num_workers=cpu_count(),
         shuffle=False)
-
-    # --------------------O(∩_∩)O-------------- 成功第四步，加载模型 ----------------------------------
+    # ---------------O(∩_∩)O--------------- 成功第四步，加载模型（if need） ------------------------------
     net = x.Net()
     if pretrained == "True":
-        pretrained_filepath = x.pretrainedPath
-        loaded_model = torch.load(pretrained_filepath)
+        pretrained_filepath = checkpoint
+        loaded_model = torch.load(pretrained_filepath, map_location=torch.device("cpu"))
         net_dict = net.state_dict()
 
         # 直接判断同名model的尺寸是否一样就可以了，不一样的不加载
@@ -222,19 +157,18 @@ def main(args):
     # --------------------O(∩_∩)O-------------- 成功第五步，训练加验证 ----------------------------------
     result_dict = {"trainloss": [], "valloss": [], "trainaccuracy": [], "valaccuracy": []}  # 用于保存记录到json里面的字典
     print('---------------- 训练前测试一波 ----------------')
-    val_acc, val_loss, _, _ = eval_val(net, val_loader, criterion)
-    best_acc = val_acc
-    best_epoch = -1
-    print("测试集准确率: {:.2f}%, 测试集loss: {:.4f}".format(100 * val_acc, val_loss))
+    val_acc, val_loss = eval_val(net, val_loader, criterion)
+    # best_acc = val_acc
+    # best_epoch = -1
+    best_acc = 0
+    best_epoch = 0
+    print("测试集准确率: {:.4f}%, 测试集loss: {:.4f}".format(100 * val_acc, val_loss))
     for cur_epoch in range(epoch_nbr):
         print('---------------- 当前epoch: {} ----------------'.format(cur_epoch))
         print('当前lr:', optimizer.state_dict()['param_groups'][0]['lr'])
-        # 训练一次
         train_acc, train_loss = run_epoch(net, train_loader, optimizer, criterion)
+        val_acc, val_loss = eval_val(net, val_loader, criterion)
         exp_lr.step()  # 学习率迭代
-
-        # 验证一次
-        val_acc, val_loss, total_output, total_label = eval_val(net, val_loader, criterion)
 
         # 记录结果，并打印
         result_dict['trainaccuracy'].append(train_acc)
@@ -253,14 +187,14 @@ def main(args):
             torch.save(net.state_dict(), model_save_path)  # 转到cpu，再保存参数
 
         # 保存json和图片
-        with open(work_dir, "w") as f:
+        with open(logging_filepath, "w") as f:
             json.dump(result_dict, f, indent=2)
 
         if draw_plt == "True":
-            save_fig(result_dict['trainaccuracy'], "accuracy of train set", './Log/train_acc.png')
-            save_fig(result_dict['valaccuracy'], "accuracy of val set", './Log/val_acc.png')
-            save_fig(result_dict['trainloss'], "train loss", './Log/train_loss.png')
-            save_fig(result_dict['valloss'], "val loss", './Log/val_loss.png')
+            save_fig(result_dict['trainaccuracy'], "accuracy of train set", str(Path(log_dir) / "train_acc.png"))
+            save_fig(result_dict['valaccuracy'], "accuracy of val set", str(Path(log_dir) / "val_acc.png"))
+            save_fig(result_dict['trainloss'], "train loss", str(Path(log_dir) / "train_loss.png"))
+            save_fig(result_dict['valloss'], "val loss", str(Path(log_dir) / "val_loss.png"))
 
     # --------------------O(∩_∩)O-------------- 成功第六步，结束 ----------------------------------
     print('---------------- 训练结束，完结撒花 ----------------')

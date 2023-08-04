@@ -1,10 +1,8 @@
+import numpy as np
 import os
 import random
-from enum import Enum
-
-import numpy as np
 import torch
-from matplotlib import pyplot as plt
+from enum import Enum
 
 
 class Bcolors(Enum):
@@ -100,6 +98,11 @@ def sample_to_device(data, device="cpu"):
 
 
 def save_fig(values, title, fig_path):
+    # 使用agg而不是默认的qt5agg
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
     t = np.arange(0, len(values))
     plt.plot(t, values)
     plt.title(title)

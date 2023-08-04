@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 
 class MyDataSet(Dataset):
-    def __init__(self, h5filepath: str, label_filepath: str, label_classes: list, which_wells=None, noise=False):
+    def __init__(self, h5filepath: str, label_classes: list, which_wells=None, noise=False):
         """
         label_classes_dict: 比如 {'3': 0, '5': 1, '1': 2, '0': 3, '6': 4, '4': 5, '2': 6, '-99999': 7}
         """
@@ -17,7 +17,6 @@ class MyDataSet(Dataset):
         self.label_classes_dict = dict(zip(label_classes, list(range(len(label_classes)))))
         self.label_classes_reversal_dict = dict(zip(list(range(len(label_classes))), label_classes))
         self.h5filepath = h5filepath
-        self.label_filepath = label_filepath
         self.noise = noise
         self.have_label = True
 
@@ -43,9 +42,9 @@ class MyDataSet(Dataset):
             # 按照float32的格式读取
             all_well_features.append(self.features_h5file[well_name]["features"][:].astype("float32"))
             if "label" in self.features_h5file[well_name].keys() and "multi_label" in self.features_h5file[well_name].keys():
-                # 四舍六入五凑偶，因为我在处理数据集的时候，为了兼容“参数估计”任务，保存的标签也是float
-                all_well_label.append(np.round(self.features_h5file[well_name]["label"][:]).astype("int32"))
-                all_well_multi_label.append(np.round(self.features_h5file[well_name]["multi_label"][:]).astype("int32"))
+                all_well_label.append(self.features_h5file[well_name]["label"][:].astype("int64"))
+                all_well_multi_label.append(self.features_h5file[well_name]["multi_label"][:].astype("int64"))
+                self.have_label = True
             else:
                 self.have_label = False
 
@@ -61,10 +60,6 @@ class MyDataSet(Dataset):
 
         self.features_mean = np.mean(self.dataset["features"].reshape(-1, self.features_nbr), axis=0)
         self.features_std = np.std(self.dataset["features"].reshape(-1, self.features_nbr), axis=0)
-        pass
-
-        # xxx = self.remove_overlap(torch.as_tensor(self.dataset["multi_label"]).contiguous().view(-1).long())
-        # yyy = self.reverse_transform_label(xxx)
 
     def __len__(self):
         # 返回数据集长度
@@ -76,14 +71,14 @@ class MyDataSet(Dataset):
         """
         features = np.copy(self.dataset["features"][idx])
         if self.noise:
-            # 貌似没什么效果
+            # 这个加噪声的方式有问题，所以先不加
             for i in range(self.features_nbr):
                 noise = 0.1 * np.random.normal(loc=self.features_mean[i], scale=self.features_std[i], size=features[:, i].shape)
                 features[:, i] += noise
 
         if self.have_label:
-            label = np.copy(self.dataset["label"][idx]).squeeze()
-            multi_label = np.copy(self.dataset["multi_label"][idx]).squeeze()
+            label = self.dataset["label"][idx].squeeze()
+            multi_label = self.dataset["multi_label"][idx].squeeze()
             return {"features": features, "label": label, "multi_label": multi_label, **self.get_data_well(idx)}
         else:
             return {"features": features, **self.get_data_well(idx)}
@@ -111,7 +106,7 @@ class MyDataSet(Dataset):
         """
         mask = {}
         for key in self.label_classes_dict.keys():
-            mask[key] = label == int(key)
+            mask[key] = (label == int(key))
         # 再根据mask填充
         for key in self.label_classes_dict.keys():
             label[mask[key]] = self.label_classes_dict[key]  # 解释标签需要转换成 0 1 2 3 4 5 6 7 这样子
@@ -124,7 +119,7 @@ class MyDataSet(Dataset):
         """
         mask = {}
         for key in self.label_classes_reversal_dict.keys():
-            mask[key] = label == int(key)
+            mask[key] = (label == int(key))
         # 再根据mask填充
         for key in self.label_classes_reversal_dict.keys():
             label[mask[key]] = int(self.label_classes_reversal_dict[key])
@@ -175,7 +170,6 @@ class MyDataSet(Dataset):
 
 
 def setup_dataloaders(h5filepath: str,
-                      label_filepath: str,
                       label_classes: list,
                       batch_size: int,
                       num_workers=0,
@@ -196,7 +190,7 @@ def setup_dataloaders(h5filepath: str,
         np.random.seed(seed)
         random.seed(seed)
 
-    dataset = MyDataSet(h5filepath, label_filepath, label_classes, which_wells, noise)
+    dataset = MyDataSet(h5filepath, label_classes, which_wells, noise)
     sampler = None  # 这个是在多GPU上用的，我没搞多GPU
     loader = DataLoader(
         dataset,
